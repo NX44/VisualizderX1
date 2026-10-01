@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NCS Integrated Audio Spectrum Visualizer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+    
+    * {
+      font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
+    }
+
+    /* Custom Glassmorphism Controls Panel */
+    .glass-panel {
+      background: rgba(15, 17, 26, 0.75);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+    }
+
+    /* File Input Styling */
+    input[type="file"]::file-selector-button {
+      background: #2a2d3d;
+      color: #e2e8f0;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      padding: 0.35rem 0.75rem;
+      border-radius: 0.375rem;
+      cursor: pointer;
+      font-size: 0.8rem;
+      font-weight: 600;
+      transition: all 0.2s ease;
+      margin-right: 0.5rem;
+    }
+
+    input[type="file"]::file-selector-button:hover {
+      background: #3b3f54;
+      border-color: rgba(255, 255, 255, 0.3);
+    }
+
+    /* Canvas Centering */
+    #canvas-container {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    #bg-layer {
+      position: absolute;
+      inset: 0;
+      background-position: center;
+      background-size: cover;
+      background-repeat: no-repeat;
+      opacity: 0.35;
+      transition: opacity 0.5s ease, background-image 0.5s ease;
+      z-index: 1;
+    }
+
+    canvas {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen overflow-hidden flex flex-col items-center justify-center select-none">
+
+  <!-- Header / Control Panel -->
+  <header class="fixed top-4 z-20 w-11/12 max-w-6xl glass-panel rounded-2xl p-4 transition-all duration-300">
+    <div class="flex flex-wrap items-center justify-between gap-4">
+      
+      <!-- Title & Branding -->
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-full bg-indigo-500/20 border border-indigo-400/40 flex items-center justify-center">
+          <div class="w-3 h-3 rounded-full bg-indigo-400 animate-pulse"></div>
+        </div>
+        <div>
+          <h1 class="text-base font-bold tracking-wide text-white">NCS Visualizer</h1>
+          <p class="text-xs text-slate-400">Integrated Audio Spectrum</p>
+        </div>
+      </div>
+
+      <!-- Controls Group -->
+      <div class="flex flex-wrap items-center gap-3 text-xs">
+        
+        <!-- Audio Upload -->
+        <div class="flex flex-col gap-1">
+          <label class="text-slate-400 font-medium">1. 음악 파일</label>
+          <input type="file" id="audio-file" accept="audio/*" class="text-slate-300 text-xs w-48">
+        </div>
+
+        <!-- Background Image Upload -->
+        <div class="flex flex-col gap-1">
+          <label class="text-slate-400 font-medium">2. 배경 이미지</label>
+          <input type="file" id="bg-file" accept="image/*" class="text-slate-300 text-xs w-48">
+        </div>
+
+        <!-- Genre Input -->
+        <div class="flex flex-col gap-1">
+          <label class="text-slate-400 font-medium">3. 장르 입력 (NCS)</label>
+          <div class="relative flex items-center">
+            <input type="text" id="genre-input" placeholder="예: 하우스, 덥스텝, trap..." 
+                   class="bg-slate-900/80 border border-slate-700/80 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 w-36 transition-colors">
+            <div id="color-indicator" class="absolute right-2 w-3 h-3 rounded-full border border-white/20 transition-all duration-300 bg-white" title="현재 적용된 장르 색상"></div>
+          </div>
+        </div>
+
+        <!-- Gemini Helper Link -->
+        <div class="flex flex-col gap-1 justify-end">
+          <label class="text-transparent select-none">도움말</label>
+          <a href="https://gemini.google.com" target="_blank" rel="noopener noreferrer" 
+             class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:via-indigo-500 hover:to-purple-500 text-white font-semibold shadow-lg shadow-indigo-950/50 transition-all transform hover:-translate-y-0.5">
+            <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24">
+              <path d="M12 2L14.8 8.6L22 12L14.8 15.4L12 22L9.2 15.4L2 12L9.2 8.6L12 2Z"/>
+            </svg>
+            <span>Gemini 도우미</span>
+          </a>
+        </div>
+
+      </div>
+
+    </div>
+  </header>
+
+  <!-- Visualizer Screen Container -->
+  <main id="canvas-container" class="w-full h-full flex items-center justify-center">
+    <div id="bg-layer"></div>
+    <canvas id="visualizer-canvas"></canvas>
+    
+    <!-- Audio Player overlay (minimal) -->
+    <div class="absolute bottom-6 z-20 glass-panel rounded-full px-6 py-2 flex items-center gap-4">
+      <audio id="audio-element" class="h-8 max-w-xs md:max-w-md accent-indigo-500" controls></audio>
+      <span id="now-playing" class="text-xs text-slate-300 font-medium truncate max-w-[150px]">음악을 업로드하세요</span>
+    </div>
+  </main>
+
+  <script>
+    const audioFileInput = document.getElementById('audio-file');
+    const bgFileInput = document.getElementById('bg-file');
+    const genreInput = document.getElementById('genre-input');
+    const colorIndicator = document.getElementById('color-indicator');
+    const audioElement = document.getElementById('audio-element');
+    const nowPlayingText = document.getElementById('now-playing');
+    const bgLayer = document.getElementById('bg-layer');
+    const canvas = document.getElementById('visualizer-canvas');
+    const ctx = canvas.getContext('2d');
+
+    // Canvas Resize Observer
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
+    let audioCtx = null;
+    let analyser = null;
+    let sourceNode = null;
+    let isAudioSetup = false;
+
+    function initAudioContext() {
+      if (isAudioSetup) return;
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 512; // Precise frequency analysis
+      
+      sourceNode = audioCtx.createMediaElementSource(audioElement);
+      sourceNode.connect(analyser);
+      analyser.connect(audioCtx.destination);
+      isAudioSetup = true;
+    }
+
+    /**
+     * NCS Official Genre Color Mapping (Image Chart Standards)
+     * Unmatched/Empty Genre defaults to pure White (#ffffff)
+     */
+    function getGenreColors(genreText) {
+      if (!genreText || !genreText.trim()) {
+        return { primary: '#ffffff', secondary: '#ffffff' };
+      }
+
+      // Normalize string: lowercase and remove spaces
+      const g = genreText.toLowerCase().replace(/\s+/g, '');
+
+      // 1. 적갈색 (UK 개러지)
+      if (g.includes('uk개러지') || g.includes('ukgarage')) {
+        return { primary: '#800000', secondary: '#a52a2a' };
+      }
+      // 2. 빨간색 (드럼스텝, 일렉트로닉 락)
+      if (g.includes('드럼스텝') || g.includes('drumstep') || g.includes('일렉트로닉락') || g.includes('electronicrock')) {
+        return { primary: '#ff0000', secondary: '#ff3333' };
+      }
+      // 3. 주황색 (인디 댄스, 신스웨이브, 팝, 락)
+      if (g.includes('인디댄스') || g.includes('indiedance') || g.includes('신스웨이브') || g.includes('synthwave') || g.includes('팝') || g.includes('pop') || g.includes('락') || g.includes('rock')) {
+        return { primary: '#ff7f00', secondary: '#ffa500' };
+      }
+      // 4. 노란색 (하우스, 스피드 개러지)
+      if (g.includes('하우스') || g.includes('house') || g.includes('스피드개러지') || g.includes('speedgarage')) {
+        return { primary: '#ffff00', secondary: '#ffea00' };
+      }
+      // 5. 연두색 (트랩)
+      if (g.includes('트랩') || g.includes('trap')) {
+        return { primary: '#7fff00', secondary: '#90ee90' };
+      }
+      // 6. 초록색 (저지 클럽)
+      if (g.includes('저지클럽') || g.includes('jerseyclub')) {
+        return { primary: '#00ff00', secondary: '#32cd32' };
+      }
+      // 7. 민트색 (글리치 합, 플러그앤비, 컴플렉스트로)
+      if (g.includes('글리치합') || g.includes('glitchhop') || g.includes('플러그앤비') || g.includes('plugg') || g.includes('컴플렉스트로') || g.includes('complextro')) {
+        return { primary: '#00ffaa', secondary: '#40e0d0' };
+      }
+      // 8. 시안색 (멜로딕 덥스텝, 칠스텝, 컬러 베이스)
+      if (g.includes('멜로딕덥스텝') || g.includes('melodicdubstep') || g.includes('칠스텝') || g.includes('chillstep') || g.includes('컬러베이스') || g.includes('colorbass')) {
+        return { primary: '#00ffff', secondary: '#00e5ff' };
+      }
+      // 9. 청록색 (펑크/퐁크 - Funk, Phonk)
+      if (g.includes('펑크') || g.includes('funk') || g.includes('퐁크') || g.includes('phonk')) {
+        return { primary: '#008080', secondary: '#00aaaa' };
+      }
+      // 10. 파란색 (덥스텝)
+      if (g.includes('덥스텝') || g.includes('dubstep')) {
+        return { primary: '#0000ff', secondary: '#3333ff' };
+      }
+      // 11. 보라색 (퓨처 하우스, 딥 하우스, 테크 하우스, 베이스 하우스, 슬랩 하우스, 퓨처 바운스, 브라질리언 베이스, 테크노, 라틴)
+      if (g.includes('퓨처하우스') || g.includes('futurehouse') || g.includes('딥하우스') || g.includes('deephouse') || g.includes('테크하우스') || g.includes('techhouse') || g.includes('베이스하우스') || g.includes('basshouse') || g.includes('슬랩하우스') || g.includes('slaphouse') || g.includes('퓨처바운스') || g.includes('futurebounce') || g.includes('테크노') || g.includes('techno') || g.includes('라틴') || g.includes('latin')) {
+        return { primary: '#8a2be2', secondary: '#9932cc' };
+      }
+      // 12. 연보라색 (퓨처 베이스)
+      if (g.includes('퓨처베이스') || g.includes('futurebass')) {
+        return { primary: '#c77dff', secondary: '#e0aaff' };
+      }
+      // 13. 자주색 (드럼 앤 베이스)
+      if (g.includes('드럼앤베이스') || g.includes('dnb') || g.includes('drumandbass')) {
+        return { primary: '#c71585', secondary: '#d87093' };
+      }
+      // 14. 분홍색 (팝 - 단독 매칭 우선순위)
+      if (g === '팝' || g === 'pop' || g.includes('kpop') || g.includes('케이팝')) {
+        return { primary: '#ff1493', secondary: '#ff69b4' };
+      }
+      // 15. 회색 (하드스타일/하드코어)
+      if (g.includes('하드스타일') || g.includes('hardstyle') || g.includes('하드코어') || g.includes('hardcore')) {
+        return { primary: '#808080', secondary: '#a9a9a9' };
+      }
+      // 16. 검은색 (베이스, 스태프 선정)
+      if (g === '베이스' || g === 'bass' || g.includes('스태프선정') || g.includes('staffpicks')) {
+        return { primary: '#333333', secondary: '#555555' };
+      }
+      // 17. 하얀색 (일렉트로닉, 브레이크, 칠아웃, 뭄바톤, 레게톤, 인더스트리얼, 살사, 뭄바코어, 유로댄스, 트랜스, 바이레퐁크, 미드템포, 리듬앤블루스, R&B)
+      if (g.includes('일렉트로닉') || g.includes('electronic') || g.includes('칠아웃') || g.includes('chillout') || g.includes('트랜스') || g.includes('trance') || g.includes('알앤비') || g.includes('r&b') || g.includes('뭄바톤') || g.includes('moombahton') || g.includes('미드템포') || g.includes('midtempo')) {
+        return { primary: '#ffffff', secondary: '#ffffff' };
+      }
+      // 18. 연보라 야광 (위치 하우스, 엔젤코어)
+      if (g.includes('위치하우스') || g.includes('witchhouse') || g.includes('엔젤코어') || g.includes('angelcore')) {
+        return { primary: '#e6e6fa', secondary: '#dcd0ff' };
+      }
+
+      // Default: White if unmatched
+      return { primary: '#ffffff', secondary: '#ffffff' };
+    }
+
+    // Audio Upload Listener
+    audioFileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        initAudioContext();
+        const objectUrl = URL.createObjectURL(file);
+        audioElement.src = objectUrl;
+        nowPlayingText.textContent = file.name;
+        audioElement.play();
+        if (audioCtx.state === 'suspended') {
+          audioCtx.resume();
+        }
+      }
+    });
+
+    // Background Image Upload Listener
+    bgFileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        const objectUrl = URL.createObjectURL(file);
+        bgLayer.style.backgroundImage = `url('${objectUrl}')`;
+      }
+    });
+
+    // Live Color Indicator Update
+    genreInput.addEventListener('input', () => {
+      const colors = getGenreColors(genreInput.value);
+      colorIndicator.style.backgroundColor = colors.primary;
+      colorIndicator.style.boxShadow = `0 0 10px ${colors.primary}`;
+    });
+
+    function renderVisualizer() {
+      requestAnimationFrame(renderVisualizer);
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+      const baseRadius = 100; // Exact 200x200 pixel base circle (radius = 100px)
+
+      let volumeRMS = 0;
+      let avgFrequency = 0;
+
+      if (analyser && !audioElement.paused) {
+        const timeData = new Uint8Array(analyser.fftSize);
+        const freqData = new Uint8Array(analyser.frequencyBinCount);
+
+        analyser.getByteTimeDomainData(timeData);
+        analyser.getByteFrequencyData(freqData);
+
+        // 1. Audio Volume (RMS / Amplitude) Calculation
+        let sumSquares = 0;
+        for (let i = 0; i < timeData.length; i++) {
+          const norm = (timeData[i] - 128) / 128; // Normalized [-1.0, 1.0]
+          sumSquares += norm * norm;
+        }
+        volumeRMS = Math.sqrt(sumSquares / timeData.length); // Range ~ [0.0, 1.0]
+
+        // 2. Average Frequency Calculation
+        let freqSum = 0;
+        for (let i = 0; i < freqData.length; i++) {
+          freqSum += freqData[i];
+        }
+        avgFrequency = freqSum / freqData.length; // Range ~ [0, 255]
+      }
+
+      // Fetch dynamic colors based on current genre input
+      const currentColors = getGenreColors(genreInput.value);
+
+      // Dynamic scale factor derived from volume (RMS)
+      const volumeExpansion = volumeRMS * 75;
+      const dynamicRadius = baseRadius + volumeExpansion;
+      const dynamicLineWidth = 3 + (volumeRMS * 14);
+      const dynamicGlow = 10 + (volumeRMS * 35);
+
+      // --- [ELEMENT 1] Inner Filled Circle (Expands with Volume & Opacity driven by Frequency) ---
+      // Map average frequency (0 ~ 255) to alpha opacity (0.1 ~ 1.0)
+      const targetAlpha = Math.min(1.0, Math.max(0.1, avgFrequency / 140));
+
+      ctx.save();
+      ctx.beginPath();
+      // Inner circle now expands dynamically with volume alongside the border
+      ctx.arc(centerX, centerY, dynamicRadius, 0, Math.PI * 2);
+      ctx.fillStyle = currentColors.primary;
+      ctx.globalAlpha = targetAlpha;
+      ctx.fill();
+      ctx.restore();
+
+      // --- [ELEMENT 2] Outer Circle Border (Pulse & Expansion driven by Volume) ---
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, dynamicRadius, 0, Math.PI * 2);
+      ctx.strokeStyle = currentColors.secondary;
+      ctx.lineWidth = dynamicLineWidth;
+      
+      // Dynamic Outer Glow Effect
+      ctx.shadowColor = currentColors.secondary;
+      ctx.shadowBlur = dynamicGlow;
+      
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Start rendering loop on load
+    window.onload = () => {
+      renderVisualizer();
+    };
+  </script>
+</body>
+</html>
